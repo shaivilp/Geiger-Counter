@@ -7,6 +7,7 @@
 
 ---
 ## Libraries Needed (Arduino Library Manager)
+**ArduinoJson**
 **Adafruit BME280**
 **LoRa by Sandeep Mistry**
 **SD.h**
