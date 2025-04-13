@@ -207,4 +207,7 @@ void loop() {
 
   //Write data to both SQLite and PiSerial
   writeData(radiation, temperature, pressure, humidity);
+
+  //Collect data every 3 seconds
+  delay(3000)
 }
