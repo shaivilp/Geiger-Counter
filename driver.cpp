@@ -21,6 +21,7 @@
 
 // Required Libraries
 #include <Wire.h>
+#include <ArduinoJson.h>
 #include <Adafruit_BME280.h>
 #include <SPI.h>
 #include <LoRa.h>
@@ -28,6 +29,7 @@
 #include <SQLite.h>
 
 #define BOOST_MODULE_PIN 23
+#define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
 #define SD_CS 4
 #define DB_FILE "/sd/data_log.db"
 
@@ -37,6 +39,12 @@ SQLiteDB db;
 // Use UART1 to send to Raspberry Pi
 HardwareSerial piSerial(1);
 
+/**
+ * @brief This function initializes the BME280 sensor.
+ * It uses I2C communication to connect to the sensor.
+ * If the sensor is not found, it prints an error message and halts the program.
+ * 
+ */
 void initSensors() {
   Wire.begin();
   if (!bme.begin(0x76)) {
@@ -45,8 +53,14 @@ void initSensors() {
   }
 }
 
+/**
+ * @brief This function initializes the LoRa module.
+ * It sets the pins for SCK, MISO, MOSI, and NSS,
+ * and begins communication at 915 MHz.
+ * 
+ */
 void initLoRa() {
-// SCK, MISO, MOSI, NSS
+  // SCK, MISO, MOSI, NSS
   SPI.begin(5, 19, 27, 18);
   LoRa.setPins(18, 14, 26);
   if (!LoRa.begin(915E6)) {
@@ -55,25 +69,56 @@ void initLoRa() {
   }
 }
 
+/**
+ * @brief This function initializes the SD card and SQLite database.
+ * It mounts the SD card and opens the database file. If the database file does not exist,
+ * it creates a new one. It also creates a table for logging data if it does not exist.
+ */
 void initSDandDB() {
   if (!SD.begin(SD_CS)) {
     Serial.println("SD Card mount failed");
     while (1);
   }
+
   if (!db.open(DB_FILE)) {
     Serial.println("Failed to open database");
     while (1);
   }
+
   db.exec("CREATE TABLE IF NOT EXISTS logs (timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, radiation TEXT, temperature REAL, pressure REAL, humidity REAL);");
 }
 
-void toggleBoostModule() {
-  digitalWrite(BOOST_MODULE_PIN, HIGH);
-  delay(1000);
+/** 
+ * @brief
+ * 
+ * This function toggles the boost module on and off at a high frequency.
+ * It uses GPIO to control the boost module pin, which is defined as a constant at the top of the file.
+ * The function runs in a separate task to avoid blocking the main loop with delayMicroseconds.
+ */
+void boostToggleTask(void *pvParameters) {
+  //Wait 300us before starting the task to allow other tasks to initialize
+  delayMicroseconds(300);
+  
+  //Set the GPIO pin for the boost module as output and set it to LOW
+  pinMode(BOOST_MODULE_PIN, OUTPUT);
   digitalWrite(BOOST_MODULE_PIN, LOW);
-  delay(1000);
+  const uint32_t mask = BOOST_PIN_MASK;
+
+  while (true) {
+    GPIO.out_w1ts = mask;  // ON
+    delayMicroseconds(10); // ~9.885 µs
+    GPIO.out_w1tc = mask;  // OFF
+    delayMicroseconds(1);  // ~0.9425 µs
+  }
 }
 
+/**
+ * @brief This function reads data from the LoRa module.
+ * It checks if there is a packet available and reads the data from it.
+ * 
+ * @return String The radiation data received from the LoRa module.
+ * If no packet is available, it returns "null".
+ */
 String readLoRa() {
   String radiation = "";
   int packetSize = LoRa.parsePacket();
@@ -87,51 +132,79 @@ String readLoRa() {
   return radiation;
 }
 
+/**
+ * @brief This function reads data from the BME280 sensor.
+ * 
+ * @param temperature - Reference to store the temperature value
+ * @param pressure  - Reference to store the pressure value
+ * @param humidity  - Reference to store the humidity value
+ */
 void readBME280(float &temperature, float &pressure, float &humidity) {
   temperature = bme.readTemperature();
   pressure = bme.readPressure() / 100.0;
   humidity = bme.readHumidity();
 }
 
-String formatAsJSON(String radiation, float temperature, float pressure, float humidity) {
-  String json = "{";
-  json += "\"radiation\":\"" + radiation + "\",";
-  json += "\"temperature\":" + String(temperature, 2) + ",";
-  json += "\"pressure\":" + String(pressure, 2) + ",";
-  json += "\"humidity\":" + String(humidity, 2);
-  json += "}";
-  return json;
-}
+/**
+ * @brief This function writes data to the SQLite database and sends it to the Raspberry Pi.
+ * It formats the data as JSON and sends it via UART.
+ * 
+ * @param radiation - The radiation data received from the LoRa module
+ * @param temperature - The temperature data from the BME280 sensor
+ * @param pressure  - The pressure data from the BME280 sensor
+ * @param humidity  - The humidity data from the BME280 sensor
+ */
+void writeData(String radiation, float temperature, float pressure, float humidity){
+  //Format the data as JSON for sending to the Raspberry Pi
+  StaticJsonDocument<256> doc;
+  doc["radiation"] = radiation;
+  doc["temperature"] = temperature;
+  doc["pressure"] = pressure;
+  doc["humidity"] = humidity;
 
-void sendToSerial(String data) {
+  String data;
+  serializeJson(doc, data);
+
   piSerial.println(data);
+
+  //Write the data to the SQLite database
+  char sql[256];
+  snprintf(sql, size(sql),
+          "INSERT INTO logs (radiation, temperature, pressure, humidity) VALUES ('%s', %.2f, %.2f, %.2f);",
+          radiation.c_str(), temperature, pressure, humidity);
+  db.exec(sql);
 }
 
-void writeToSQLite(String radiation, float temperature, float pressure, float humidity) {
-  String sql = "INSERT INTO logs (radiation, temperature, pressure, humidity) VALUES (";
-  sql += "'" + radiation + "', " + String(temperature) + ", " + String(pressure) + ", " + String(humidity) + ");";
-  db.exec(sql.c_str());
-}
-
+/**
+ * @brief The setup function initializes the serial communication,
+ * LoRa module, SD card, and SQLite database.
+ * 
+ */
 void setup() {
+  //Initialize Serial and PiSerial
   Serial.begin(115200);
   piSerial.begin(9600, SERIAL_8N1, 17, 16);
-  pinMode(BOOST_MODULE_PIN, OUTPUT);
-  digitalWrite(BOOST_MODULE_PIN, LOW);
 
+  //Initialize sensors, LoRa, and SD card with SQLite database
   initSensors();
   initLoRa();
   initSDandDB();
+
+  //Create separate task for toggling the boost module
+  //This is done to avoid blocking the main loop with delayMicroseconds
+  xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
 }
 
+/**
+ * @brief The loop function continuously reads data from the LoRa module and BME280 sensor,
+ * and writes the data to both the SQLite database and Raspberry Pi via UART.
+ * 
+ */
 void loop() {
-  toggleBoostModule();
-
   String radiation = readLoRa();
   float temperature, pressure, humidity;
   readBME280(temperature, pressure, humidity);
 
-  String json = formatAsJSON(radiation, temperature, pressure, humidity);
-  sendToSerial(json);
-  writeToSQLite(radiation, temperature, pressure, humidity);
+  //Write data to both SQLite and PiSerial
+  writeData(radiation, temperature, pressure, humidity);
 }
