@@ -26,7 +26,7 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <SD.h>
-#include <SQLite.h>
+#include <sqlite3.h>
 
 #define BOOST_MODULE_PIN 23
 #define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
@@ -34,7 +34,7 @@
 #define DB_FILE "/sd/data_log.db"
 
 Adafruit_BME280 bme;
-SQLiteDB db;
+sqlite3 *db;
 
 // Use UART1 to send to Raspberry Pi
 HardwareSerial piSerial(1);
