@@ -26,7 +26,10 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <SD.h>
-#include <sqlite3.h>
+#include "esp32/rom/ets_sys.h"
+#include "soc/gpio_reg.h"
+#include "sqlite3.h"
+
 
 #define BOOST_MODULE_PIN 23
 #define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
@@ -80,12 +83,38 @@ void initSDandDB() {
     while (1);
   }
 
-  if (!db.open(DB_FILE)) {
-    Serial.println("Failed to open database");
+  int rc;
+  rc = sqlite3_open("/sd/data_log.db", &db);
+  if (rc) {
+    Serial.printf("Can't open database: %s\n", sqlite3_errmsg(db));
     while (1);
   }
+  
+  //Create logs table if it does not exist
+  const char *createTableSQL = R"(
+    CREATE TABLE IF NOT EXISTS logs (
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+      radiation TEXT,
+      temperature REAL,
+      pressure REAL,
+      humidity REAL
+    );
+  )";
 
-  db.exec("CREATE TABLE IF NOT EXISTS logs (timestamp DATETIME DEFAULT CURRENT_TIMESTAMP, radiation TEXT, temperature REAL, pressure REAL, humidity REAL);");
+  sqlite3_stmt *stmt;
+  rc = sqlite3_prepare_v2(db, createTableSQL, -1, &stmt, nullptr);
+  if (rc != SQLITE_OK) {
+    Serial.printf("Failed to prepare CREATE TABLE statement: %s\n", sqlite3_errmsg(db));
+    while (true);
+  }
+  
+  rc = sqlite3_step(stmt);
+  if (rc != SQLITE_DONE) {
+    Serial.printf("Failed to execute CREATE TABLE statement: %s\n", sqlite3_errmsg(db));
+    while (true);
+  }
+
+  sqlite3_finalize(stmt);
 }
 
 /** 
@@ -105,10 +134,10 @@ void boostToggleTask(void *pvParameters) {
   const uint32_t mask = BOOST_PIN_MASK;
 
   while (true) {
-    GPIO.out_w1ts = mask;  // ON
-    delayMicroseconds(10); // ~9.885 µs
-    GPIO.out_w1tc = mask;  // OFF
-    delayMicroseconds(1);  // ~0.9425 µs
+    REG_WRITE(GPIO_OUT_W1TS_REG, mask);  // ON
+    ets_delay_us(10); // ~9.885 µs
+    REG_WRITE(GPIO_OUT_W1TC_REG, mask);  // OFF
+    ets_delay_us(1); // ~0.9425 µs
   }
 }
 
@@ -168,11 +197,27 @@ void writeData(String radiation, float temperature, float pressure, float humidi
   piSerial.println(data);
 
   //Write the data to the SQLite database
-  char sql[256];
-  snprintf(sql, size(sql),
-          "INSERT INTO logs (radiation, temperature, pressure, humidity) VALUES ('%s', %.2f, %.2f, %.2f);",
-          radiation.c_str(), temperature, pressure, humidity);
-  db.exec(sql);
+  const char *insertSQL = "INSERT INTO logs (radiation, temperature, pressure, humidity) VALUES (?, ?, ?, ?);";
+  sqlite3_stmt *stmt;
+  int rc = sqlite3_prepare_v2(db, insertSQL, -1, &stmt, NULL);
+  if (rc != SQLITE_OK) {
+    Serial.printf("Failed to prepare statement: %s\n", sqlite3_errmsg(db));
+    return;
+  }
+
+  // Bind values to statement
+  sqlite3_bind_text(stmt, 1, radiation.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_double(stmt, 2, temperature);
+  sqlite3_bind_double(stmt, 3, pressure);
+  sqlite3_bind_double(stmt, 4, humidity);
+
+  // Execute
+  rc = sqlite3_step(stmt);
+  if (rc != SQLITE_DONE) {
+    Serial.printf("Failed to execute statement: %s\n", sqlite3_errmsg(db));
+  }
+
+  sqlite3_finalize(stmt);
 }
 
 /**
@@ -209,5 +254,5 @@ void loop() {
   writeData(radiation, temperature, pressure, humidity);
 
   //Collect data every 3 seconds
-  delay(3000)
+  delay(3000);
 }
