@@ -39,9 +39,6 @@
 Adafruit_BME280 bme;
 sqlite3 *db;
 
-// Use UART1 to send to Raspberry Pi
-HardwareSerial piSerial(1);
-
 /**
  * @brief This function initializes the BME280 sensor.
  * It uses I2C communication to connect to the sensor.
@@ -194,7 +191,7 @@ void writeData(String radiation, float temperature, float pressure, float humidi
   String data;
   serializeJson(doc, data);
 
-  piSerial.println(data);
+  Serial.println(data);
 
   //Write the data to the SQLite database
   const char *insertSQL = "INSERT INTO logs (radiation, temperature, pressure, humidity) VALUES (?, ?, ?, ?);";
@@ -226,18 +223,17 @@ void writeData(String radiation, float temperature, float pressure, float humidi
  * 
  */
 void setup() {
-  //Initialize Serial and PiSerial
+  //Initialize Serial
   Serial.begin(115200);
-  piSerial.begin(9600, SERIAL_8N1, 17, 16);
 
   //Initialize sensors, LoRa, and SD card with SQLite database
   initSensors();
-  initLoRa();
-  initSDandDB();
+  // initLoRa();
+  // initSDandDB();
 
   //Create separate task for toggling the boost module
   //This is done to avoid blocking the main loop with delayMicroseconds
-  xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
+  // xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
 }
 
 /**
@@ -246,12 +242,12 @@ void setup() {
  * 
  */
 void loop() {
-  String radiation = readLoRa();
+  // String radiation = readLoRa();
   float temperature, pressure, humidity;
   readBME280(temperature, pressure, humidity);
-
+  Serial.printf("Temperature: %s\n Pressure: %s\n Humidity: %s\n", temperature, pressure, humidity);
   //Write data to both SQLite and PiSerial
-  writeData(radiation, temperature, pressure, humidity);
+  // writeData(radiation, temperature, pressure, humidity);
 
   //Collect data every 3 seconds
   delay(3000);
