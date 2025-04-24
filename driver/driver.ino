@@ -47,8 +47,8 @@ sqlite3 *db;
  */
 void initSensors() {
   Wire.begin();
-  if (!bme.begin(0x76)) {
-    Serial.println("BME280 not found!");
+  if (!bme.begin(0x76) && !bme.begin(0x77)) {
+    Serial.println("Could not find a valid BME280 sensor, check wiring!");
     while (1);
   }
 }
@@ -81,7 +81,7 @@ void initSDandDB() {
   }
 
   int rc;
-  rc = sqlite3_open("/sd/data_log.db", &db);
+  rc = sqlite3_open(DB_FILE, &db);
   if (rc) {
     Serial.printf("Can't open database: %s\n", sqlite3_errmsg(db));
     while (1);
@@ -102,13 +102,11 @@ void initSDandDB() {
   rc = sqlite3_prepare_v2(db, createTableSQL, -1, &stmt, nullptr);
   if (rc != SQLITE_OK) {
     Serial.printf("Failed to prepare CREATE TABLE statement: %s\n", sqlite3_errmsg(db));
-    while (true);
   }
   
   rc = sqlite3_step(stmt);
   if (rc != SQLITE_DONE) {
     Serial.printf("Failed to execute CREATE TABLE statement: %s\n", sqlite3_errmsg(db));
-    while (true);
   }
 
   sqlite3_finalize(stmt);
@@ -124,10 +122,6 @@ void initSDandDB() {
 void boostToggleTask(void *pvParameters) {
   //Wait 300us before starting the task to allow other tasks to initialize
   delayMicroseconds(300);
-  
-  //Set the GPIO pin for the boost module as output and set it to LOW
-  pinMode(BOOST_MODULE_PIN, OUTPUT);
-  digitalWrite(BOOST_MODULE_PIN, LOW);
   const uint32_t mask = BOOST_PIN_MASK;
 
   while (true) {
@@ -226,6 +220,10 @@ void setup() {
   //Initialize Serial
   Serial.begin(115200);
 
+  //Set the GPIO pin for the boost module as output and set it to LOW
+  pinMode(BOOST_MODULE_PIN, OUTPUT);
+  digitalWrite(BOOST_MODULE_PIN, LOW);
+
   //Initialize sensors, LoRa, and SD card with SQLite database
   initSensors();
   // initLoRa();
@@ -245,7 +243,7 @@ void loop() {
   // String radiation = readLoRa();
   float temperature, pressure, humidity;
   readBME280(temperature, pressure, humidity);
-  Serial.printf("Temperature: %s\n Pressure: %s\n Humidity: %s\n", temperature, pressure, humidity);
+  Serial.printf("Temperature: %.2f\n Pressure: %.2f\n Humidity: %.2f\n", temperature, pressure, humidity);
   //Write data to both SQLite and PiSerial
   // writeData(radiation, temperature, pressure, humidity);
 
