@@ -23,14 +23,12 @@
 #include <Wire.h>
 #include <ArduinoJson.h>
 #include <Adafruit_BME280.h>
-#include <SPI.h>
-#include <LoRa.h>
 #include <SD.h>
 #include "esp32/rom/ets_sys.h"
 #include "soc/gpio_reg.h"
 #include "sqlite3.h"
 
-
+#define GEIGER_PIN 32 
 #define BOOST_MODULE_PIN 23
 #define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
 #define SD_CS 4
@@ -38,6 +36,7 @@
 
 Adafruit_BME280 bme;
 sqlite3 *db;
+volatile unit32_t pulseCount = 0;
 
 /**
  * @brief This function initializes the BME280 sensor.
@@ -53,21 +52,6 @@ void initSensors() {
   }
 }
 
-/**
- * @brief This function initializes the LoRa module.
- * It sets the pins for SCK, MISO, MOSI, and NSS,
- * and begins communication at 915 MHz.
- * 
- */
-void initLoRa() {
-  // SCK, MISO, MOSI, NSS
-  SPI.begin(5, 19, 27, 18);
-  LoRa.setPins(18, 14, 26);
-  if (!LoRa.begin(915E6)) {
-    Serial.println("LoRa failed");
-    while (1);
-  }
-}
 
 /**
  * @brief This function initializes the SD card and SQLite database.
@@ -112,6 +96,14 @@ void initSDandDB() {
   sqlite3_finalize(stmt);
 }
 
+/**
+ * @brief This function is called when a radiation pulse is detected.
+ * It increments the pulseCount variable to keep track of the number of pulses.
+ */
+void IRAM_ATTR onRadiationPulse() {
+  pulseCount++;
+}
+
 /** 
  * @brief
  * 
@@ -132,25 +124,6 @@ void boostToggleTask(void *pvParameters) {
   }
 }
 
-/**
- * @brief This function reads data from the LoRa module.
- * It checks if there is a packet available and reads the data from it.
- * 
- * @return String The radiation data received from the LoRa module.
- * If no packet is available, it returns "null".
- */
-String readLoRa() {
-  String radiation = "";
-  int packetSize = LoRa.parsePacket();
-  if (packetSize) {
-    while (LoRa.available()) {
-      radiation += (char)LoRa.read();
-    }
-  } else {
-    radiation = "null";
-  }
-  return radiation;
-}
 
 /**
  * @brief This function reads data from the BME280 sensor.
@@ -174,7 +147,7 @@ void readBME280(float &temperature, float &pressure, float &humidity) {
  * @param pressure  - The pressure data from the BME280 sensor
  * @param humidity  - The humidity data from the BME280 sensor
  */
-void writeData(String radiation, float temperature, float pressure, float humidity){
+void writeData(int radiation, float temperature, float pressure, float humidity){
   //Format the data as JSON for sending to the Raspberry Pi
   StaticJsonDocument<256> doc;
   doc["radiation"] = radiation;
@@ -224,14 +197,17 @@ void setup() {
   pinMode(BOOST_MODULE_PIN, OUTPUT);
   digitalWrite(BOOST_MODULE_PIN, LOW);
 
+  // Setup Geiger pulse pin
+  pinMode(GEIGER_PIN, INPUT);
+  attachInterrupt(digitalPinToInterrupt(GEIGER_PIN), onRadiationPulse, FALLING);
+
   //Initialize sensors, LoRa, and SD card with SQLite database
   initSensors();
-  // initLoRa();
-  // initSDandDB();
+  initSDandDB();
 
   //Create separate task for toggling the boost module
   //This is done to avoid blocking the main loop with delayMicroseconds
-  // xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
+  //xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
 }
 
 /**
@@ -240,12 +216,23 @@ void setup() {
  * 
  */
 void loop() {
-  // String radiation = readLoRa();
+  //static uint32_t lastPulseCount = 0;
   float temperature, pressure, humidity;
+
+  // Read BME280 sensor data
   readBME280(temperature, pressure, humidity);
+
+  //Calculate CPM from pulse count
+  // uint32_t currentCount = pulseCount;
+  // uint32_t delta = currentCount - lastPulseCount;
+  // lastPulseCount = currentCount;
+
+  // 3s interval → scale by 20 for CPM
+  // uint32_t cpm = delta * 20;
+
   Serial.printf("Temperature: %.2f\n Pressure: %.2f\n Humidity: %.2f\n", temperature, pressure, humidity);
   //Write data to both SQLite and PiSerial
-  // writeData(radiation, temperature, pressure, humidity);
+  //writeData(cpm, temperature, pressure, humidity);
 
   //Collect data every 3 seconds
   delay(3000);
