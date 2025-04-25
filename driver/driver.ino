@@ -23,10 +23,16 @@
 #include <Wire.h>
 #include <ArduinoJson.h>
 #include <Adafruit_BME280.h>
+#include <SPI.h>
 #include <SD.h>
 #include "esp32/rom/ets_sys.h"
 #include "soc/gpio_reg.h"
 #include "sqlite3.h"
+
+#define BME_CS   5
+#define BME_MOSI 23
+#define BME_MISO 19
+#define BME_SCK  18
 
 #define GEIGER_PIN 32 
 #define BOOST_MODULE_PIN 23
@@ -45,8 +51,7 @@ volatile unit32_t pulseCount = 0;
  * 
  */
 void initSensors() {
-  Wire.begin();
-  if (!bme.begin(0x76) && !bme.begin(0x77)) {
+  if (!bme.begin()) {
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
     while (1);
   }
