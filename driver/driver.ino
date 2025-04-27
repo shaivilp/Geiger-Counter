@@ -12,7 +12,7 @@
  ESP32 Environmental & Radiation Data Logger
  --------------------------------------------------
  Logs BME280 temperature, pressure, and humidity data
- along with LoRa-received radiation counts from an LND 712 tube.
+ along with radiation counts from an LND 712 tube.
  Data is stored in an SQLite database on an SD card and sent to
  a Raspberry Pi via UART in JSON format.
 
@@ -25,24 +25,20 @@
 #include <Adafruit_BME280.h>
 #include <SPI.h>
 #include <SD.h>
+#include <Wire.h>
 #include "esp32/rom/ets_sys.h"
 #include "soc/gpio_reg.h"
 #include "sqlite3.h"
 
-#define BME_CS   5
-#define BME_MOSI 23
-#define BME_MISO 19
-#define BME_SCK  18
-
 #define GEIGER_PIN 32 
-#define BOOST_MODULE_PIN 23
+#define BOOST_MODULE_PIN 27
 #define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
 #define SD_CS 4
 #define DB_FILE "/sd/data_log.db"
 
 Adafruit_BME280 bme;
 sqlite3 *db;
-volatile unit32_t pulseCount = 0;
+volatile uint32_t pulseCount = 0;
 
 /**
  * @brief This function initializes the BME280 sensor.
@@ -51,10 +47,14 @@ volatile unit32_t pulseCount = 0;
  * 
  */
 void initSensors() {
-  if (!bme.begin()) {
+  if (!bme.begin(0x76)) {
+    if(!bme.begin(0x77)){
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
-    while (1);
+    return;
+    }
   }
+
+  Serial.println("Successfully connected to the BME280 sensor!");
 }
 
 
@@ -80,7 +80,7 @@ void initSDandDB() {
   const char *createTableSQL = R"(
     CREATE TABLE IF NOT EXISTS logs (
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      radiation TEXT,
+      radiation INT,
       temperature REAL,
       pressure REAL,
       humidity REAL
@@ -175,7 +175,7 @@ void writeData(int radiation, float temperature, float pressure, float humidity)
   }
 
   // Bind values to statement
-  sqlite3_bind_text(stmt, 1, radiation.c_str(), -1, SQLITE_TRANSIENT);
+  sqlite3_bind_int(stmt, 1, radiation);
   sqlite3_bind_double(stmt, 2, temperature);
   sqlite3_bind_double(stmt, 3, pressure);
   sqlite3_bind_double(stmt, 4, humidity);
@@ -197,6 +197,11 @@ void writeData(int radiation, float temperature, float pressure, float humidity)
 void setup() {
   //Initialize Serial
   Serial.begin(115200);
+  delay(2000);
+
+  Serial.println("Starting setup...");
+
+  Wire.begin(21, 22);
 
   //Set the GPIO pin for the boost module as output and set it to LOW
   pinMode(BOOST_MODULE_PIN, OUTPUT);
@@ -213,6 +218,7 @@ void setup() {
   //Create separate task for toggling the boost module
   //This is done to avoid blocking the main loop with delayMicroseconds
   //xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
+  Serial.println("Finished setup.");
 }
 
 /**
@@ -221,23 +227,28 @@ void setup() {
  * 
  */
 void loop() {
-  //static uint32_t lastPulseCount = 0;
+  static uint32_t lastPulseCount = 0;
   float temperature, pressure, humidity;
 
   // Read BME280 sensor data
   readBME280(temperature, pressure, humidity);
 
   //Calculate CPM from pulse count
-  // uint32_t currentCount = pulseCount;
-  // uint32_t delta = currentCount - lastPulseCount;
-  // lastPulseCount = currentCount;
+  uint32_t currentCount = pulseCount;
+  uint32_t delta = currentCount - lastPulseCount;
+  lastPulseCount = currentCount;
 
   // 3s interval → scale by 20 for CPM
-  // uint32_t cpm = delta * 20;
+  uint32_t cpm = delta * 20;
 
-  Serial.printf("Temperature: %.2f\n Pressure: %.2f\n Humidity: %.2f\n", temperature, pressure, humidity);
+  Serial.println("---- BME280 Readings ----");
+  Serial.printf("Temperature: %.2f °C\n", temperature);
+  Serial.printf("Pressure:    %.2f hPa\n", pressure);
+  Serial.printf("Humidity:    %.2f %%\n", humidity);
+  Serial.println("-------------------------");
+
   //Write data to both SQLite and PiSerial
-  //writeData(cpm, temperature, pressure, humidity);
+  writeData(cpm, temperature, pressure, humidity);
 
   //Collect data every 3 seconds
   delay(3000);
