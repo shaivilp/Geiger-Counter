@@ -241,11 +241,11 @@ void loop() {
   // 3s interval → scale by 20 for CPM
   uint32_t cpm = delta * 20;
 
-  Serial.println("---- BME280 Readings ----");
-  Serial.printf("Temperature: %.2f °C\n", temperature);
-  Serial.printf("Pressure:    %.2f hPa\n", pressure);
-  Serial.printf("Humidity:    %.2f %%\n", humidity);
-  Serial.println("-------------------------");
+  // Serial.println("---- BME280 Readings ----");
+  // Serial.printf("Temperature: %.2f °C\n", temperature);
+  // Serial.printf("Pressure:    %.2f hPa\n", pressure);
+  // Serial.printf("Humidity:    %.2f %%\n", humidity);
+  // Serial.println("-------------------------");
 
   //Write data to both SQLite and PiSerial
   writeData(cpm, temperature, pressure, humidity);
