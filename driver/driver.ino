@@ -57,7 +57,6 @@ void initSensors() {
   Serial.println("Successfully connected to the BME280 sensor!");
 }
 
-
 /**
  * @brief This function initializes the SD card and SQLite database.
  * It mounts the SD card and opens the database file. If the database file does not exist,
