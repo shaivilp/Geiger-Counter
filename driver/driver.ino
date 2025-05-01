@@ -216,7 +216,7 @@ void setup() {
 
   //Create separate task for toggling the boost module
   //This is done to avoid blocking the main loop with delayMicroseconds
-  //xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
+  xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
   Serial.println("Finished setup.");
 }
 
