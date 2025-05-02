@@ -20,6 +20,7 @@
 */
 
 // Required Libraries
+#include <Arduino.h>
 #include <Wire.h>
 #include <ArduinoJson.h>
 #include <Adafruit_BME280.h>
@@ -30,9 +31,9 @@
 #include "soc/gpio_reg.h"
 #include "sqlite3.h"
 
-#define GEIGER_PIN 32 
-#define BOOST_MODULE_PIN 27
-#define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
+// #define GEIGER_PIN 32 
+// #define BOOST_MODULE_PIN 27
+// #define BOOST_PIN_MASK (1ULL << BOOST_MODULE_PIN)
 #define SD_CS 4
 #define DB_FILE "/sd/data_log.db"
 
@@ -77,9 +78,8 @@ void initSDandDB() {
   
   //Create logs table if it does not exist
   const char *createTableSQL = R"(
-    CREATE TABLE IF NOT EXISTS logs (
+    CREATE TABLE IF NOT EXISTS data_log (
       timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      radiation INT,
       temperature REAL,
       pressure REAL,
       humidity REAL
@@ -104,9 +104,9 @@ void initSDandDB() {
  * @brief This function is called when a radiation pulse is detected.
  * It increments the pulseCount variable to keep track of the number of pulses.
  */
-void IRAM_ATTR onRadiationPulse() {
-  pulseCount++;
-}
+// void IRAM_ATTR onRadiationPulse() {
+//   pulseCount++;
+// }
 
 /** 
  * @brief
@@ -115,18 +115,38 @@ void IRAM_ATTR onRadiationPulse() {
  * It uses GPIO to control the boost module pin, which is defined as a constant at the top of the file.
  * The function runs in a separate task to avoid blocking the main loop with delayMicroseconds.
  */
-void boostToggleTask(void *pvParameters) {
-  //Wait 300us before starting the task to allow other tasks to initialize
-  delayMicroseconds(300);
-  const uint32_t mask = BOOST_PIN_MASK;
+// void boostToggleTask(void *pvParameters) {
+//   //Wait 300us before starting the task to allow other tasks to initialize
+//   delayMicroseconds(300);
+//   const uint32_t mask = BOOST_PIN_MASK;
 
-  while (true) {
-    REG_WRITE(GPIO_OUT_W1TS_REG, mask);  // ON
-    ets_delay_us(10); // ~9.885 µs
-    REG_WRITE(GPIO_OUT_W1TC_REG, mask);  // OFF
-    ets_delay_us(1); // ~0.9425 µs
-  }
-}
+//   while (true) {
+//     REG_WRITE(GPIO_OUT_W1TS_REG, mask);  // ON
+//     ets_delay_us(10); // ~9.885 µs
+//     REG_WRITE(GPIO_OUT_W1TC_REG, mask);  // OFF
+//     ets_delay_us(1); // ~0.9425 µs
+//   }
+// }
+
+/**
+ * @brief Starts PWM on the boost module pin with a short initial delay.
+ *
+ * Configures hardware PWM at ~92.34 kHz with a 91.3% duty cycle.
+ * Delays 300 microseconds before enabling the output.
+ */
+// void initBoostPWM() {
+//   const int pwmResolution = 9; 
+//   const double frequencyHz = 92340.0;
+//   const double dutyCycle = 0.913;
+//   const int duty = round(dutyCycle * ((1 << pwmResolution) - 1));
+
+//   // Initial 300 Microsecond delay
+//   delayMicroseconds(300);
+
+//   //Start PWM on BOOST_MODULE_PIN
+//   ledcAttach(BOOST_MODULE_PIN, frequencyHz, pwmResolution);
+//   ledcWrite(BOOST_MODULE_PIN, duty);
+// }
 
 
 /**
@@ -151,10 +171,9 @@ void readBME280(float &temperature, float &pressure, float &humidity) {
  * @param pressure  - The pressure data from the BME280 sensor
  * @param humidity  - The humidity data from the BME280 sensor
  */
-void writeData(int radiation, float temperature, float pressure, float humidity){
+void writeData(float temperature, float pressure, float humidity){
   //Format the data as JSON for sending to the Raspberry Pi
   StaticJsonDocument<256> doc;
-  doc["radiation"] = radiation;
   doc["temperature"] = temperature;
   doc["pressure"] = pressure;
   doc["humidity"] = humidity;
@@ -165,7 +184,7 @@ void writeData(int radiation, float temperature, float pressure, float humidity)
   Serial.println(data);
 
   //Write the data to the SQLite database
-  const char *insertSQL = "INSERT INTO logs (radiation, temperature, pressure, humidity) VALUES (?, ?, ?, ?);";
+  const char *insertSQL = "INSERT INTO data_log (temperature, pressure, humidity) VALUES (?, ?, ?);";
   sqlite3_stmt *stmt;
   int rc = sqlite3_prepare_v2(db, insertSQL, -1, &stmt, NULL);
   if (rc != SQLITE_OK) {
@@ -174,10 +193,9 @@ void writeData(int radiation, float temperature, float pressure, float humidity)
   }
 
   // Bind values to statement
-  sqlite3_bind_int(stmt, 1, radiation);
-  sqlite3_bind_double(stmt, 2, temperature);
-  sqlite3_bind_double(stmt, 3, pressure);
-  sqlite3_bind_double(stmt, 4, humidity);
+  sqlite3_bind_double(stmt, 1, temperature);
+  sqlite3_bind_double(stmt, 2, pressure);
+  sqlite3_bind_double(stmt, 3, humidity);
 
   // Execute
   rc = sqlite3_step(stmt);
@@ -202,13 +220,13 @@ void setup() {
 
   Wire.begin(21, 22);
 
-  //Set the GPIO pin for the boost module as output and set it to LOW
-  pinMode(BOOST_MODULE_PIN, OUTPUT);
-  digitalWrite(BOOST_MODULE_PIN, LOW);
+  //Set the GPIO pin for the boost module as output and set it to LOW (NO longer needed)
+  // pinMode(BOOST_MODULE_PIN, OUTPUT);
+  // digitalWrite(BOOST_MODULE_PIN, LOW);
 
   // Setup Geiger pulse pin
-  pinMode(GEIGER_PIN, INPUT);
-  attachInterrupt(digitalPinToInterrupt(GEIGER_PIN), onRadiationPulse, FALLING);
+  // pinMode(GEIGER_PIN, INPUT);
+  // attachInterrupt(digitalPinToInterrupt(GEIGER_PIN), onRadiationPulse, FALLING);
 
   //Initialize sensors, LoRa, and SD card with SQLite database
   initSensors();
@@ -216,7 +234,8 @@ void setup() {
 
   //Create separate task for toggling the boost module
   //This is done to avoid blocking the main loop with delayMicroseconds
-  xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
+  //xTaskCreatePinnedToCore(boostToggleTask, "BoostToggleTask", 2048, NULL, 2, NULL, 0);
+  //initBoostPWM();
   Serial.println("Finished setup.");
 }
 
@@ -226,28 +245,13 @@ void setup() {
  * 
  */
 void loop() {
-  static uint32_t lastPulseCount = 0;
   float temperature, pressure, humidity;
 
   // Read BME280 sensor data
   readBME280(temperature, pressure, humidity);
-
-  //Calculate CPM from pulse count
-  uint32_t currentCount = pulseCount;
-  uint32_t delta = currentCount - lastPulseCount;
-  lastPulseCount = currentCount;
-
-  // 3s interval → scale by 20 for CPM
-  uint32_t cpm = delta * 20;
-
-  // Serial.println("---- BME280 Readings ----");
-  // Serial.printf("Temperature: %.2f °C\n", temperature);
-  // Serial.printf("Pressure:    %.2f hPa\n", pressure);
-  // Serial.printf("Humidity:    %.2f %%\n", humidity);
-  // Serial.println("-------------------------");
-
+  
   //Write data to both SQLite and PiSerial
-  writeData(cpm, temperature, pressure, humidity);
+  writeData(temperature, pressure, humidity);
 
   //Collect data every 3 seconds
   delay(3000);
